@@ -1,0 +1,114 @@
+//googleSheetPrompts.gs
+
+//________________________________________________________________________________________________________________________________________________________________________
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//googleSheetPrompts.gs
+/*
+prompt_okCancel(message, stringCase = " ")
+prompt_yesNo(message)
+prompt_splitList(message, splitter = ',', stringCase = " ")
+prompt_simpleResponse(message)
+alert
+*//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//________________________________________________________________________________________________________________________________________________________________________
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// prompt_okCancel
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+function prompt_okCancel(message, stringCase = " ") {
+
+  var ui = SpreadsheetApp.getUi();
+  var result = ui.prompt(message, ui.ButtonSet.OK_CANCEL);
+  var button = result.getSelectedButton();
+  var text = result.getResponseText();
+
+  if(button == ui.Button.CANCEL || button == ui.Button.CLOSE) 
+    text = "QUIT";
+
+  if(stringCase == "upper")
+    text = text.toString().toUpperCase();
+  else if(stringCase == "lower")
+    text = text.toString().toLowerCase();
+
+  return text;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// prompt_yesNo
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+function prompt_yesNo(message) {
+
+  var userChoice = "";
+
+  var ui = SpreadsheetApp.getUi();
+  var response = ui.alert(message, ui.ButtonSet.YES_NO);
+
+  if(response == ui.Button.YES)
+    userChoice = "yes";
+  else if(response == ui.Button.NO)
+    userChoice = "no";
+  else
+    userChoice = "QUIT";
+
+  return userChoice;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// prompt_commaSeparatedList
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+function prompt_splitList(message, splitter = ',', stringCase = " ") {
+
+  var ui = SpreadsheetApp.getUi();
+  var result = ui.prompt(message, ui.ButtonSet.OK_CANCEL);
+  var button = result.getSelectedButton();
+  var text = result.getResponseText();
+
+  if(button == ui.Button.OK) 
+    var shipmentID =  text;
+  else if(button == ui.Button.CANCEL || button == ui.Button.CLOSE) 
+    var shipmentID =  "QUIT,QUIT";
+
+  //turning user's input-string into an array that can be iterated through by the for-loop
+  shipmentIDArray = shipmentID.toString().split(splitter);
+
+  for(a = 0; a < shipmentIDArray.length; a++) {
+
+    shipmentIDArray[a] = shipmentIDArray[a].trim();
+
+    if(stringCase == "upper")
+      shipmentIDArray[a] = shipmentIDArray[a].toString().toUpperCase();
+    else if(stringCase == "lower")
+      shipmentIDArray[a] = shipmentIDArray[a].toString().toLowerCase();
+  }
+
+  Logger.log(shipmentIDArray);
+  return shipmentIDArray;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// prompt_simpleResponse
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+function prompt_simpleResponse(message) {
+
+  var ui = SpreadsheetApp.getUi();
+  var result = ui.prompt(message, ui.ButtonSet.OK_CANCEL);
+  var button = result.getSelectedButton();
+  var text = result.getResponseText();
+  var response = "";
+
+  if(button == ui.Button.OK) 
+    response =  text;
+  else if(button == ui.Button.CANCEL || button == ui.Button.CLOSE) 
+    response =  "QUIT";
+  //response = response.trim();
+
+  return response;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// alert
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+function alert(message) {
+
+  SpreadsheetApp.getUi().alert(message);
+}
