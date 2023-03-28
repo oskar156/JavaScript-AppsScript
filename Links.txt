@@ -1,6 +1,6 @@
 NBA Season Standings Flow (Data Visualization)
-https://docs.google.com/spreadsheets/d/1Bz9v8S5rkqaBGYzzFc7Duyt0805lOl2zZcbmaiYbANE/edit#gid=0
-
+https://docs.google.com/spreadsheets/d/1Bz9v8S5rkqaBGYzzFc7Duyt0805lOl2zZcbmaiYbANE/edit (public)
+https://docs.google.com/spreadsheets/d/1QJadsiBolAnr0ea1XGaTJqTvaKQKs7Su5ZdcpWLOyWk/edit (private version with API access)
 Accessed NBA-API using AppsScript
 Parsed data
 Visualized using onEdit functions and formulas
