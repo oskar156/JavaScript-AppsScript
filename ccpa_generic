@@ -1,0 +1,1890 @@
+/*=========================================================================================
+TABLE OF CONTENTS
+
+MAIN FUNCTIONS
+main()
+exportAsCsv()
+labelAsOneOff()
+
+HELPER FUNCTIONS
+getGMailMessages(labelName = "", dateToGet = new Date(0))
+parseAndLabelCcpaMessages(messages, addToLabelName = "")
+labelMessagesAsOneOff(messages)
+getSubjectType(subject)
+insertDataIntoCcpaSpreadsheet(data, sheetName, headerRow, date = new Date())
+mondayToSunday(currentDate)
+extractFirstName(fullName)
+extractLastName(fullName)
+extractAddress1and2(address)
+
+
+=========================================================================================*/
+
+//=========================================================================================
+//MAIN FUNCTIONS
+//=========================================================================================
+
+//------------------------------------------------------------
+//LOOKS IN THE INBOX AND SPAM FOR CCPA EMAIL THREADS ON A CERTAIN DATE, PARSES OUT THE DATA AND PASTES INTO A SHEET
+//TRIGGERED TO RUN DAILY 4-5 AM (TO PULL YESTERDAY'S MESSAGES)
+//------------------------------------------------------------
+function main()
+{
+
+  //----------------------------------------
+  //getGMailMessages RETURNS AN ARRAY OF ALL THE GMAIL MESSAGES IN THE INBOX OR A LABEL
+  //----------------------------------------
+  let labelName = ""; //blank will get the inbox
+  let dateToGet = new Date(new Date().setDate((new Date()).getDate() - 1)); //new Date(new Date().setDate((new Date()).getDate() - 1));
+  //
+  //today:     new Date() 
+  //example:   new Date("March 10, 2024") 
+  //yesterday: new Date(new Date().setDate((new Date()).getDate() - 1)) //https://stackoverflow.com/questions/5511323/calculate-the-date-yesterday-in-javascript
+  //get all:   new Date(0) 
+
+  Logger.log("dateToGet: " + String(dateToGet));
+
+  let inboxMessages = getGMailMessages(labelName, dateToGet); 
+  Logger.log("INBOX Messages: " + String(inboxMessages.length));
+  if(inboxMessages == null || inboxMessages.length == 0)
+  {
+    inboxMessages = [];
+  }
+
+  let spamMessages = getGMailMessages("__SPAM__", dateToGet); 
+  Logger.log("SPAM Messages: " + String(spamMessages.length));
+  if(spamMessages == null || spamMessages.length == 0)
+  {
+    spamMessages = [];
+  }
+  
+  let messages = inboxMessages.concat(spamMessages);
+  Logger.log("TOTAL Messages: " + String(messages.length));
+  
+  //----------------------------------------
+  //getGMailMessages LOOPS THROUGH A LIST OF GMAIL MESSAGES AND PARSES THOSE IT IDENTIFIES AS CCPA MESSAGES
+  //INSERTS THE MESSAGES INTO (AND CREATES IF NEEDED) THE RELEVANT GMAIL LABEL (EACH MESSAGE'S MONTH YEAR)
+  //RETURNS A 2D ARRAY OF THE PARSED DATA
+  //----------------------------------------
+  let addToLabelName = "_CCPA_EMAIL_DATE_";
+  let allData = parseAndLabelCcpaMessages(messages, addToLabelName);
+  let data = allData[0];
+  let dataAtlas = allData[1];
+
+  Logger.log("Data length: " + String(data.length));
+  Logger.log("Data length (Atlas): " + String(dataAtlas.length));
+
+  //----------------------------------------
+  //insertDataIntoCcpaSpreadsheet INSERTS THE DATA INTO (AND CREATES IF NEEDED) THE RELEVANT SHEET (CURRENT MONTH YEAR) - should this be changed to weekly?
+  //CcpaSpreadsheet: https://docs.google.com/spreadsheets/d/1VFk0fX9p9gKmOcZ9eM-5-8TS1CjcKDLLsAUWixqzoAc/edit#gid=609420643
+  //----------------------------------------
+  let sheetName = "_CCPA_CURRENT_DATE_";
+  let headerRow = 1; //1-indexed
+  insertDataIntoCcpaSpreadsheet(data, sheetName, headerRow, dateToGet);
+  insertAtlasDataIntoCcpaSpreadsheet(dataAtlas, sheetName, headerRow, dateToGet);
+}
+
+
+
+//------------------------------------------------------------
+//EXPORTS A SPREADSHEET TAB AS CSV AND SEND IT AS AN ATTACHMENT IN AN EMAIL
+//TRIGGERED TO RUN WEEKLY EVERY MONDAY AT 6-7AM (EMAIL'S ALL OF LAST WEEK'S MESSAGES AS CSV)
+//------------------------------------------------------------
+function exportAsCsv()
+{
+  //modify trigger to daily
+
+  //get active ss
+  let ss = SpreadsheetApp.getActiveSpreadsheet();
+  let ssId = ss.getId();
+  
+  //add weekday check
+  //if mon then atlas and rest
+  //else if sat or sun, then nothing
+  //else then atlas
+  //get relevant sheet
+  let sheetName = mondayToSunday(new Date(new Date().setDate((new Date()).getDate() - 1))); //yesterday, which would always be Sunday 
+  //yesterday: (new Date()).setDate((new Date()).getDate() - 1) //https://stackoverflow.com/questions/5511323/calculate-the-date-yesterday-in-javascript
+
+  Logger.log(`sheetName to attach: ${sheetName}`);
+  
+  let sheet = ss.getSheetByName(sheetName);
+  let sheetId = sheet.getSheetId();
+
+  //attach in an email and send to relevant addresses  
+  let recipients = ""; //; semicolon separated list
+  let subject = `CCPA/Data Removal Requests ${sheetName}`;
+  let body = `The attached csv has the CCPA/Data Removal Requests messages for date range: ${sheetName}.`;
+  Logger.log(`recipients: ${recipients}`);
+  Logger.log(`subject: ${subject}`);
+
+  //attachments
+  let format = "csv";
+  let fileName = sheetName
+  let url = `https://docs.google.com/spreadsheets/d/${ssId}/export?exportFormat=${format}&format=${format}&gid=${sheetId}`; 
+
+  let token = ScriptApp.getOAuthToken();
+  let response = UrlFetchApp.fetch(url, {headers : {'Authorization' : 'Bearer ' + token}}).getBlob().setName(`${fileName}.${format}`);
+
+  let options = {attachments: response};
+
+  GmailApp.sendEmail(recipients, subject, body, options);
+} 
+
+function testsheet()
+{
+  let ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName("20241202-20241203_ATLAS");
+  let sheetNameDateRangeStr = everySecondDay(new Date(new Date().setDate((new Date()).getDate() - 1)));
+  Logger.log(sheetNameDateRangeStr);
+  Logger.log(everySecondDay(new Date("December 2, 2024")));
+  Logger.log(everySecondDay(new Date("December 1, 2024")));
+  Logger.log(everySecondDay(new Date("November 30, 2024")));
+  
+  let data = sheet.getDataRange().getValues();
+  //Logger.log();
+  Logger.log(data[0].length);
+
+  if(data.length == 1)
+  {
+    Logger.log(0);
+  }
+  else
+  {
+    Logger.log(1);
+  }
+}
+
+//------------------------------------------------------------
+//EXPORTS AN ATLAS SPREADSHEET TAB AS CSV AND SEND IT AS AN ATTACHMENT IN AN EMAIL
+//TRIGGERED TO RUN MON, WED, FRI  AT 8-9AM (ON MON IT SEND FRI,SAT,SUN) (ON WED IT SEND MON,TUE) (ON FRI IT SEND WED,THU)
+//------------------------------------------------------------
+function exportAsCsvAtlas()
+{
+  //date.getDay() goes from 0-6 sun-sat, which hurts my head, so the below changes it to 1-7 mon-sun
+  let day = new Date(new Date().setDate((new Date()).getDate())).getDay();
+  if(day == 0) //if sunday
+    day = 7;
+  
+
+  //dont send on these days
+  if(day == 2) {return;}//tue
+  if(day == 4) {return;}//thu
+  if(day == 6) {return;}//sat
+  if(day == 7) {return;}//sun
+
+  //get active ss
+  let ss = SpreadsheetApp.getActiveSpreadsheet();
+  let ssId = ss.getId();
+  
+  //add weekday check
+  //if mon then atlas and rest
+  //else if sat or sun, then nothing
+  //else then atlas
+  //get relevant sheet
+  
+  let sheetName =             mondayToSunday(new Date(new Date().setDate((new Date()).getDate() - 1))); //yesterday, which would always be Sunday 
+  let sheetNameDateRangeStr = everySecondDay(new Date(new Date().setDate((new Date()).getDate() - 1)));
+  sheetName = sheetNameDateRangeStr + "_ATLAS";  
+  //yesterday: (new Date()).setDate((new Date()).getDate() - 1) //https://stackoverflow.com/questions/5511323/calculate-the-date-yesterday-in-javascript
+
+  Logger.log(`sheetName to attach: ${sheetName}`);
+  
+  let sheet = ss.getSheetByName(sheetName);
+  let sheetId = sheet.getSheetId();
+  let data = sheet.getDataRange().getValues();
+  
+  if(data.length <= 1)
+  {
+    Logger.log("Sheet is empty!");
+    return;
+  }
+
+  //attach in an email and send to relevant addresses  
+  let recipients = ""; //; semicolon separated list
+  let subject = `Atlas Data Removal Requests ${sheetName}`;
+  let body = `The attached csv has the Atlas Data Removal Requests messages for date range: ${sheetNameDateRangeStr}.`;
+  Logger.log(`recipients: ${recipients}`);
+  Logger.log(`subject: ${subject}`);
+
+  //attachments
+  let format = "csv";
+  let fileName = sheetName
+  let url = `https://docs.google.com/spreadsheets/d/${ssId}/export?exportFormat=${format}&format=${format}&gid=${sheetId}`; 
+
+  let token = ScriptApp.getOAuthToken();
+  let response = UrlFetchApp.fetch(url, {headers : {'Authorization' : 'Bearer ' + token}}).getBlob().setName(`${fileName}.${format}`);
+
+  let options = {attachments: response};
+
+  GmailApp.sendEmail(recipients, subject, body, options);
+} 
+
+//------------------------------------------------------------
+//LOOKS IN THE INBOX AND SPAM AND LABELS ONE-OFFS
+//TRIGGERED TO HOURLY
+//------------------------------------------------------------
+function labelAsOneOff()
+{
+  //----------------------------------------
+  //getGMailMessages RETURNS AN ARRAY OF ALL THE GMAIL MESSAGES IN THE INBOX OR A LABEL
+  //----------------------------------------
+  let labelName = ""; //blank will get the inbox
+  let dateToGet = new Date(); //new Date()
+  //
+  //today:     new Date() 
+  //example:   new Date("March 10, 2024") 
+  //yesterday: new Date(new Date().setDate((new Date()).getDate() - 1)) //https://stackoverflow.com/questions/5511323/calculate-the-date-yesterday-in-javascript
+  //get all:   new Date(0) 
+
+  Logger.log("dateToGet: " + String(dateToGet));
+
+  let inboxMessages = getGMailMessages(labelName, dateToGet); 
+  Logger.log("INBOX Messages: " + String(inboxMessages.length));
+
+  let spamMessages = getGMailMessages("__SPAM__", dateToGet); 
+  Logger.log("SPAM Messages: " + String(spamMessages.length));
+
+  let messages = inboxMessages.concat(spamMessages);
+  Logger.log("TOTAL Messages: " + String(messages.length));
+  
+  //----------------------------------------
+  //getGMailMessages LOOPS THROUGH A LIST OF GMAIL MESSAGES AND PARSES THOSE IT IDENTIFIES AS CCPA MESSAGES
+  //INSERTS THE MESSAGES INTO (AND CREATES IF NEEDED) THE RELEVANT GMAIL LABEL (EACH MESSAGE'S MONTH YEAR)
+  //RETURNS A 2D ARRAY OF THE PARSED DATA
+  //----------------------------------------
+  labelMessagesAsOneOff(messages);
+  //Logger.log("Data length: " + String(data.length));
+}
+
+
+
+
+//=========================================================================================
+//HELPER FUNCTIONS
+//=========================================================================================
+
+//------------------------------------------------------------
+//RETURNS AN ARRAY OF ALL THE GMAIL MESSAGES IN THE INBOX OR A LABEL
+//------------------------------------------------------------
+function getGMailMessages(labelName = "", dateToGet = new Date(0))
+{
+  let messageObjects = [];
+  let threads = [];
+  let threadsRemain = true;
+  let threadIndex = 0; //0
+  let threadsToGetPerLoop = 100; //max of 500 
+  
+  let dateFilter = false;
+  if(dateToGet.getTime() != new Date(0).getTime()) //if it's not the default value of new Date(0), then the date filter should be used
+  {
+    dateFilter = true;
+  }
+
+  let datePassed = false;
+  let page = 1;
+  
+  //The below loop gets gmail inbox threads in "threadsToGetPerLoop" increments
+  //It continues until there are no more threads to get or it passes the date we want
+  while(threadsRemain == true && datePassed == false) // && page <= 2   <----  to limit pages add this into the while statement
+  {
+    let skipPage = false;
+
+    //which gmail label should we get the threads from?
+    if(labelName == "") //defults to inbox if user doesn't provide a label name
+    {
+      threads = GmailApp.getInboxThreads(threadIndex, threadsToGetPerLoop);//gets the threads from the inbox, returns a max of 500 threads
+    }
+    else if(labelName == "__SPAM__")
+    {
+      threads = GmailApp.getSpamThreads(threadIndex, threadsToGetPerLoop);//gets the threads from the spam folder, returns a max of 500 threads
+    }
+    else
+    {
+      label = GmailApp.getUserLabelByName(labelName);
+      threads = label.getThreads(threadIndex, threadsToGetPerLoop);//gets the threads from the label if it's defined above
+    }
+    Logger.log("Searching " + String(threadsToGetPerLoop) + " gmail threads starting from index " + String(threadIndex));
+    //loop for each email thread
+    //this loop will stop early if we are looking for a specifdic date and we pass that date
+
+    //if last thread's first message is > dateToGet, then skip the entire page!
+    //this will skip messages in the date we are looking for if they're in threads with a newer latest message - this isn't a problem for this ccpa task though
+    if(threads.length > 0 && dateFilter == true)
+    {
+      let lastThreadsFirstMsg = threads[threads.length - 1].getMessages()[0];
+      let lastThreadsFirstMsgDt = lastThreadsFirstMsg.getDate();
+
+      if(new Date(lastThreadsFirstMsgDt.getFullYear(), lastThreadsFirstMsgDt.getMonth(), lastThreadsFirstMsgDt.getDate(), 0, 0, 0, 0).getTime() > 
+         new Date(dateToGet.getFullYear(), dateToGet.getMonth(), dateToGet.getDate(), 0, 0, 0, 0).getTime())
+      {
+        skipPage = true;
+      }
+    }
+
+    for (let i = 0; i < threads.length && datePassed == false && skipPage == false; i++)
+    { 
+      
+      let messages = threads[i].getMessages(); //creates an array with all the messages
+
+      //loop for each message in the email thread
+      //this loop will stop early if we are looking for a specifdic date and we pass that date
+
+      //newest message is index 0, oldest message is .length - 1
+      for (let m = messages.length - 1; m >= 0 && datePassed == false; m--) 
+      {
+        
+        let msgDt = messages[m].getDate();
+
+        //do we want to choose a specific date?
+        let dateComaprison = false;
+        if(dateFilter == true)
+        {
+          //do we want messages from this date?
+          if(msgDt.getFullYear() == dateToGet.getFullYear() &&
+             msgDt.getMonth() == dateToGet.getMonth() &&
+             msgDt.getDate() == dateToGet.getDate()
+            )
+          {
+            dateComaprison = true;
+          }
+
+          //did we pass the date we want, so we can tell the loop to stop?
+          //messages returned from gmail inbox always seem to be de in descending order by date (newer first)
+
+          //this may be an issue when dealing with email threads that have multiple messages spanning a wide date range
+          //a message that's really old in a more recent thread will stop the loop, even through there might be newer messages in the following threads (hope that makes sense)
+          //even though this inbox is seemingly all single thread ccpa messages, so we should be fine
+          //i still only checked for datePassed if m == 0, so only the first message in a thread (what determines the thread's order in the inbox) will be look at
+          //this way nothing will be missed
+          if(m == messages.length - 1)
+          {
+            if(msgDt.getTime() < new Date(dateToGet.getFullYear(), dateToGet.getMonth(), dateToGet.getDate(), 0, 0, 0, 0).getTime())
+            {
+              datePassed = true;
+            }
+          }
+        }
+        
+        if((dateToGet.getTime() == new Date(0).getTime()) || (dateToGet.getTime() != new Date(0).getTime() && dateComaprison == true))
+        {
+          messageObjects.push(messages[m]);
+        }
+      }
+    }
+
+    //threadsRemain = false; //leave this commented out, just for testing
+    if(threads.length == 0)
+    {
+      threadsRemain = false;
+    }
+
+    threadIndex += threadsToGetPerLoop;
+    page += 1;
+  }
+
+  return messageObjects;
+}
+
+
+
+//------------------------------------------------------------
+//LOOPS THROUGH A LIST OF GMAIL MESSAGES AND PARSES THOSE IT IDENTIFIES AS CCPA MESSAGES
+//RETURNS A 2D ARRAY OF THE PARSED DATA
+//------------------------------------------------------------
+function parseAndLabelCcpaMessages(messages, addToLabelName = "")
+{
+  let currentUser = Session.getActiveUser();
+  let data = [];
+  let dataAtlas = [];
+  //For every email
+  let email_index = 0;
+  for(let email of messages)
+  {
+    //Logger.log("email_index" + email_index.toString());
+    let date = email.getDate();
+
+    //Categorize email by subject line
+    let subject = email.getSubject();
+    let emailFromRaw = email.getFrom();
+    let emailFrom = emailFromRaw;
+    let subjectType = 0;
+    
+    GmailApp.moveThreadToInbox(email.getThread()); //so they dont stay in spam
+    
+    if(email_index % 10 == 0) Logger.log(String(email_index) + " " + String(subject));
+    
+
+    //----------------------------------------------------------------
+    //LABEL EACH EMAIL BY SUBJECT LINE
+
+    //there are a few types of emails that come in with ccpa requests
+    //it looks like we can categorize them by their subject lines
+    //if a new email type comes in that isn't accounted for below, then it will be ignored by this script!
+    let subjectTypeInfo = getSubjectType(subject);
+    subjectType = subjectTypeInfo[0];
+    emailFrom = subjectTypeInfo[1];
+    //all other subjects will have a subjectType of 0
+
+    //If the email is recognized as a ccpa request above...
+    //Logger.log(subjectType);
+    if(subjectType > 0)
+    {
+
+      let body = email.getPlainBody(); //get the plain text body of the gmail message
+      let bodyHtml = email.getBody(); //get the plain text body of the gmail message
+      //these will be arrays of regex-matched-stings
+      //most of the time it'll just be 1 match
+      //not all of them will be used in any one email type
+
+
+      //these will store Regex Matches straight from the Email Mesage
+      let nameRaw;
+      let nameRaw2;
+      let phoneRaw;
+      let firstNameRaw;
+      let lastNameRaw;
+      let addressRaw;
+      let emailRaw;
+      let emailRaw2;
+      let dobRaw;
+      let addresses = [];
+      let emails = [];
+      
+      //Create Regex objects based on subject line type
+      //each email type needs different regex lookups to parse out the data we want
+
+      //----------------------------------------------------------------
+      //REGEX DEFINITIONS
+      
+      //incogni
+      if(subjectType == 1)
+      {
+        nameRaw = body.match(new RegExp("Name:[\n|\r|\t| ]+.*"));
+
+        let lines = body.split("\n");
+
+        //for each each line in tht email (get all emails and addresses)
+        for(let i = 0; i < lines.length; i++)
+        {
+          line = lines[i];
+          //if the line is Address
+          if(line.trim() == "Address:")
+          {
+            let isAddressLine = true;
+            while(isAddressLine == true) //while we are on the address lines
+            {
+              i++; // go to the next line to skip Address
+              line = lines[i]; //re-define line as the new line
+              isAddressLine = new RegExp("United States|USA").test(line); //an address is defined as a line with USA or United States in it
+              if(isAddressLine)
+              {
+                addresses.push(line); //add line to addresses
+                //Logger.log(line);
+              }
+            }
+          }
+          if(line.trim() == "E-mail address:")
+          {
+            let isEmailLine = true;
+            while(isEmailLine) //while we are on the address lines
+            {
+              i++; // go to the next line to skip Address
+              line = lines[i]; //re-define line as the new line
+              isEmailLine = new RegExp("\@.*\.").test(line); //an email is defined as a line with @ then at some point later a . in it
+              if(isEmailLine)
+              {
+                emails.push(line); //add line to addresses
+              }
+            }
+          }
+        }
+      }
+      //PurePrivacy
+      else if(subjectType == 2)
+      {
+        nameRaw = body.match(new RegExp("Name: .*"));
+        addressRaw = body.match(new RegExp("Residential Countries applicable: .*"));
+        emailRaw = body.match(new RegExp("Email address: .*"));
+      }
+      //optery
+      else if(subjectType == 3)
+      {
+        nameRaw = body.match(new RegExp("Full Name:.*"));
+        firstNameRaw = body.match(new RegExp("First Name:.*"));
+        lastNameRaw = body.match(new RegExp("Last Name:.*"));
+        addressRaw = body.match(new RegExp("Address:[\n|\r|\t| ]+.*[\n|\r|\t| ]+.*[\n|\r|\t| ]+.*[\n|\r|\t| ]+.*"));
+        //emailRaw = body.match(new RegExp("Email address: .*"));
+      }
+      //atlas
+      else if(subjectType == 4)
+      {
+        nameRaw = body.match(new RegExp("Name: .*"));
+        nameRaw2 = body.match(new RegExp("Other Names or Variants .by which I am known or may be identified.:.*"));
+        phoneRaw = body.match(new RegExp("Phone:.*"));        
+        addressRaw = body.match(new RegExp("Home Address: .*"));
+      }
+      //consumer reports
+      else if(subjectType == 5)
+      {
+        nameRaw = bodyHtml.match(new RegExp("Name.*[\n|\r|\t| ]+.*"));
+        addressRaw = bodyHtml.match(new RegExp("Address.*[\n|\r|\t| ]+.*"));
+        phoneRaw = bodyHtml.match(new RegExp("Phone.*[\n|\r|\t| ]+.*"));        
+        emailRaw = bodyHtml.match(new RegExp("Primary email.*[\n|\r|\t| ]+.*"));
+        emailRaw2 = bodyHtml.match(new RegExp("Additional email.*[\n|\r|\t| ]+.*"));
+      }
+      //EMRX
+      else if(subjectType == 6)
+      {
+        nameRaw = bodyHtml.match(new RegExp("Name:.*"));
+        addressRaw = bodyHtml.match(new RegExp("Addres.*"));
+        phoneRaw = bodyHtml.match(new RegExp("Phone Number:.*"));        
+        emailRaw = bodyHtml.match(new RegExp("Email:.*"));
+        dobRaw = bodyHtml.match(new RegExp("Date of Birth:.*"));
+      }
+
+
+      //----------------------------------------------------------------
+      //PARSING
+      //Parse the regex matches into seperate fields
+
+      //these will store the parsed information from the regex matches above
+      let name = "";
+      let name2 = "";
+      let firstName = "";
+      let lastName = "";
+      let names = [];
+      let firstNames = [];
+      let lastNames = [];
+
+      let addressFull = "";
+      let address1And2 = "";
+      let addressSplit = [];
+      let address = "";
+      let address1 = "";
+      let address2 = "";
+      let city = "";
+      let state = "";
+      let country = "";
+      let zip="";
+      let zip4="";
+      let zipRaw="";
+      let zip4Raw="";
+
+      let emailAddress = "";
+
+      let phone = "";
+
+      let dob = "";
+
+      let address1s = [];
+      let address2s = [];
+      let zips = [];
+      let zip4s = [];
+      let cities = [];
+      let states = [];
+      let countries = [];
+      let address1And2s = [];
+      
+      let recordsToPush = 1;
+      
+      //the actual parsing:
+
+      //incogni
+      if(subjectType == 1)
+      {
+        //parse name
+        if(nameRaw != null)
+        {
+          name = nameRaw[0].substring("Name: ".length, nameRaw[0].length);
+          firstName = extractFirstName(name);
+          lastName = extractLastName(name);
+        }
+
+        //calculate number of records to push (greater of emails.length and addreses.length)
+        let iterations = addresses.length;
+        if(emails.length > iterations)
+        {
+          iterations = emails.length;
+        }
+        recordsToPush = iterations;
+
+        //for each emails/addresses
+        for(i = 0; i < iterations; i++)
+        {
+          //if we have an address
+          if(i < addresses.length)
+          {
+            let zipsAlreadyPushed = false;
+            addressFull = addresses[i].trim();
+            addressFull = String(addressFull).replace(new RegExp("([0-9]|[0-9][0-9])\.[ ]+"),"").trim();
+            addressSplit = addressFull.split(",");
+            let addySplitLen = addressSplit.length;
+            zipRaw = addressFull.match(new RegExp("[0-9][0-9][0-9][0-9][0-9](,|[ ]+,|$|\n|-[0-9][0-9][0-9][0-9])"));
+            zip4Raw = "";
+
+            if(zipRaw) //if we find the zip by regex
+            {
+              zipRaw = zipRaw[0].trim();
+              if(zipRaw.length == 5) //91401
+              {
+                zipRaw = zipRaw.substring(0,5);
+                zip4Raw = "";
+                zips.push(zipRaw);
+                zip4s.push(zip4Raw);
+                zipsAlreadyPushed = true;
+              }
+              else if(zipRaw.length == 6) //91401,
+              {
+                zipRaw = zipRaw.substring(0,5);
+                zip4Raw = "";
+                zips.push(zipRaw);
+                zip4s.push(zip4Raw);
+                zipsAlreadyPushed = true;
+              }
+              else if(zipRaw.length == 10) //91401-9482
+              {
+                zipRaw = zipRaw.substring(0,5);
+                zip4Raw = "";//zipRaw.substring(zipRaw.length - 4);
+                zips.push(zipRaw);
+                zip4s.push(zip4Raw);
+                zipsAlreadyPushed = true;
+              }
+            }
+            else
+            {
+                zipRaw = "";
+                zip4Raw = "";
+            }
+      
+            if(addressSplit != null && addressSplit.length >= 4)
+            {
+              //country is ALMOST always second to last
+              let countryRaw = addressSplit[addySplitLen - 2].trim();
+              country = countryRaw.toUpperCase();
+
+                //skip state and city
+                if(addySplitLen == 4)
+                {
+                  address1And2 = addressSplit[0].trim();
+                  let address1And2Split = extractAddress1and2(address1And2);
+
+                  address1 = address1And2Split[0];
+                  address2 = address1And2Split[1];
+                  city = addressSplit[1].substring(0, addressSplit[1].length - 2).trim();
+                  state = addressSplit[1].substring(addressSplit[1].length - 2, addressSplit[1].length).trim();
+                }
+                else if(addySplitLen == 5)
+                {
+                  if(date < new Date("June 4, 2024")) //before jun4 2024 - they had a format change on this date
+                  {
+                    address1 = addressSplit[0].trim();
+                    address2 = addressSplit[1].trim();
+                    address1And2 = String(address1 + " " + address2).trim();
+                    
+                    city = addressSplit[2].substring(0, addressSplit[2].length - 2).trim();
+                    state = addressSplit[2].substring(addressSplit[2].length - 2, addressSplit[2].length).trim();
+                  }
+                  else //after jun4 2024
+                  {
+                    address1And2 = addressSplit[0].trim();
+                    let address1And2Split = extractAddress1and2(address1And2);
+
+                    address1 = address1And2Split[0];
+                    address2 = address1And2Split[1];
+                    city = addressSplit[1].trim();
+                    state = addressSplit[2].trim();
+                  }
+                }
+                else if(addySplitLen == 6)
+                {
+                  address1 = addressSplit[0].trim();
+                  address2 = addressSplit[1].trim();
+                  address1And2 = String(address1 + " " + address2).trim()
+                  city = addressSplit[2].trim();
+                  state = addressSplit[3].trim();
+                }
+
+                address1s.push(address1);
+                address2s.push(address2);
+                address1And2s.push(address1And2);
+                cities.push(city);
+                states.push(state);
+
+                if(zipsAlreadyPushed == false)
+                {
+                  zips.push(zip);
+                  zip4s.push(zip4);
+                }
+                countries.push(country);
+            }
+          }
+          else
+          {
+            addresses.push("");
+            address1s.push("");
+            address2s.push("");
+            address1And2s.push("");
+            cities.push("");
+            states.push("");
+            zips.push("");
+            zip4s.push("");
+            countries.push("");
+          }
+  
+          
+          if(i < emails.length)
+          {
+            emails[i] = emails[i].substring("1. ".length, emails[i].length);
+          }
+          else
+          {
+            emails.push("");
+          }         
+        }
+
+        if(emailAddress.indexOf(",") >= 0)
+        {
+          emailAddressSplit = emailAddress.split(",");
+          recordsToPush = emailAddressSplit.length;
+        }
+      }
+      else if(subjectType == 2)
+      {
+        if(nameRaw != null)
+        {
+          name = nameRaw[0].substring("Name: ".length, nameRaw[0].length);
+          firstName = extractFirstName(name);
+          lastName = extractLastName(name);
+        }
+
+        if(addressRaw != null)
+        {
+          addressFull = addressRaw[0].substring("Residential Countries applicable: ".length, addressRaw[0].length);
+          addressSplit = addressFull.split(",");
+        }
+        if(addressSplit.length == 1)
+        {
+          country = addressSplit[0].trim();
+        }
+        if(addressSplit.length == 2)
+        {
+          state = addressSplit[0].trim();
+          country = addressSplit[1].trim();
+        }
+        
+        if(emailRaw != null)
+        {
+          emailAddress = emailRaw[0].substring("Email address: ".length, emailRaw[0].length);
+        }
+
+        if(emailAddress.indexOf(",") >= 0)
+        {
+          emailAddressSplit = emailAddress.split(",");
+          recordsToPush = emailAddressSplit.length;
+        }
+      }
+      else if(subjectType == 3)
+      {
+        if(nameRaw != null)
+        {
+          name = nameRaw[0].substring("Full Name: ".length, nameRaw[0].length);
+        }
+
+        if(firstNameRaw != null)
+        {
+          firstName = firstNameRaw[0].substring("First Name: ".length, firstNameRaw[0].length);
+        }
+
+        if(lastNameRaw != null)
+        {
+          lastName = lastNameRaw[0].substring("Last Name: ".length, lastNameRaw[0].length);
+        }
+
+        if(addressRaw != null)
+        {
+          addressFull = addressRaw[0].substring("Address: ".length, addressRaw[0].length);
+          addressFull = addressFull.replace(/Age:.*[0-9]+/, "");
+          addressSplit = addressFull.split("\n");
+          
+        }
+          //Logger.log(addressRaw);
+          //Logger.log(addressFull);
+          //Logger.log(addressSplit);
+          //Logger.log(addressSplit.length);
+          
+        if(addressSplit.length == 6)
+        {
+          address = addressSplit[1].trim();
+          address1 = addressSplit[1].trim()
+          address2 = "";
+
+          let cityStateZip_combined = addressSplit[2];
+          let cityStateZip_split = cityStateZip_combined.split(",");
+          city = cityStateZip_split[0].trim();
+          //Logger.log(addressFull);
+          //Logger.log(cityStateZip_split);
+          let stateZip_split = cityStateZip_split[1].trim().split(" ");
+          state = stateZip_split[0].trim();
+          zip = stateZip_split[1].trim().substring(0,5);
+
+          country = addressSplit[3].trim();
+        }
+        else if(addressSplit.length == 5)
+        {
+          address1 = addressSplit[1].trim()
+          address2 = addressSplit[2].trim()
+          address = address1 + " " + address2;
+
+          let cityStateZip_combined = addressSplit[3];
+          let cityStateZip_split = cityStateZip_combined.split(",");
+          city = cityStateZip_split[0].trim();
+          //Logger.log(addressFull);
+          //Logger.log(cityStateZip_split);
+          let stateZip_split = cityStateZip_split[1].trim().split(" ");
+          state = stateZip_split[0].trim();
+          zip = stateZip_split[1].trim().substring(0,5);
+
+          country = "US";
+        }
+        
+        //if(emailRaw != null)
+        //{
+        //  emailAddress = emailRaw[0].substring("Email address: ".length, emailRaw[0].length);
+        //}
+        
+        if(emailAddress.indexOf(",") >= 0)
+        {
+          emailAddressSplit = emailAddress.split(",");
+          recordsToPush = emailAddressSplit.length;
+        }
+      }
+      else if(subjectType == 4)
+      {
+        if(nameRaw != null)
+        {
+          names.push(nameRaw[0].substring("Name: ".length, nameRaw[0].length).trim());
+        }
+        if(nameRaw2 != null)
+        {
+          let additionalNames = nameRaw2[0].substring("Other Names or Variants (by which I am known or may be identified):".length, nameRaw2[0].length).trim();
+          let additionalNamesSplit = additionalNames.split(",");
+          for(let a = 0; a < additionalNamesSplit.length; a++)
+          {
+            names.push(additionalNamesSplit[a].trim());
+          }
+        }
+
+        for(let n = 0; n < names.length; n++)
+        {
+          let currentName = names[n];
+          let currentFirstName = extractFirstName(currentName);
+          let currentLastName = extractLastName(currentName);
+          firstNames.push(currentFirstName);
+          lastNames.push(currentLastName);
+        }
+
+        if(addressRaw != null)
+        {
+          addressFull = addressRaw[0].substring("Home Address: ".length, addressRaw[0].length);
+          //addressFull = addressFull.replace(/Age:.*[0-9]+/, "");
+          address = addressFull;
+          addressSplit = addressFull.split(",");
+          let addySplitLen = addressSplit.length;
+          let addySplitFinalIndex = addressSplit.length - 1;
+          
+          if(addySplitLen == 3)
+          {
+            address1 = addressSplit[0].trim();
+            city = addressSplit[1].trim();
+            state = addressSplit[2].trim().substring(0, 2).trim();
+            zip = addressSplit[2].trim().substring(addressSplit[2].length - 6, addressSplit[2].length - 1).trim();   
+          }
+          else if(addySplitLen == 4)
+          {
+            address1 = addressSplit[0].trim() + " " + addressSplit[1].trim();
+            city = addressSplit[2].trim();
+            state = addressSplit[3].trim().substring(0, 2).trim();
+            zip = addressSplit[3].trim().substring(addressSplit[3].length - 6, addressSplit[3].length - 1).trim();            
+          }
+          
+        }
+
+        if(phoneRaw != null)
+        {
+          phone = phoneRaw[0].substring("Phone: ".length, phoneRaw[0].length);
+          phone = cleanPhone(phone);
+        }
+
+        recordsToPush = names.length;
+      }
+
+      else if(subjectType == 5)
+      {
+        //nameRaw = bodyHtml.match(new RegExp("Name.*[\n|\r|\t| ]+.*"));
+        //addressRaw = bodyHtml.match(new RegExp("Address.*[\n|\r|\t| ]+.*"));
+        //phoneRaw = bodyHtml.match(new RegExp("Phone.*[\n|\r|\t| ]+.*"));        
+        //emailRaw = bodyHtml.match(new RegExp("Primary email.*[\n|\r|\t| ]+.*"));
+        //emailRaw2 = bodyHtml.match(new RegExp("Additional email.*[\n|\r|\t| ]+.*"));
+        if(nameRaw != null)
+        {
+          let nameLine = nameRaw[0].split("\n")[1].trim();
+          name = nameLine.substring(4, nameLine.length - 5);
+          firstName = extractFirstName(name);
+          lastName = extractLastName(name);
+        }
+
+        if(addressRaw != null)
+        {
+          let addressLine = addressRaw[0].split("\n")[1].trim();
+          addressFull = addressLine.substring(4, addressLine.length - 5);
+          addressSplit = addressFull.split(",");   
+          addressSplit = addressFull.split(",");
+          let addySplitLen = addressSplit.length;
+
+          if(addySplitLen == 3)
+          {
+            address1 = addressSplit[0].trim();
+            address = address1;
+            city = addressSplit[1].trim();
+            state = addressSplit[2].trim().substring(0, 2).trim();
+            zip = addressSplit[2].trim().substring(addressSplit[2].length - 6, addressSplit[2].length - 1).trim();   
+          }
+          else if(addySplitLen == 4)
+          {
+            address1 = addressSplit[0].trim() + " " + addressSplit[1].trim();
+            address = address1;
+            city = addressSplit[2].trim();
+            state = addressSplit[3].trim().substring(0, 2).trim();
+            zip = addressSplit[3].trim().substring(addressSplit[3].length - 6, addressSplit[3].length - 1).trim();            
+          }   
+        }
+
+        if(phoneRaw != null)
+        {
+          let removeFirstNumber = true;
+          let phoneLine = phoneRaw[0].split("\n")[1].trim();
+          phone = phoneLine.substring(4, phoneLine.length - 5);
+          phone = cleanPhone(phone, removeFirstNumber);
+        }
+
+        if(emailRaw != null)
+        {
+          let emailLine = emailRaw[0].split("\n")[1].trim();
+          emailAddress = emailLine.substring(4, emailLine.length - 5);
+          if(emailAddress.trim() != "")
+          {
+            emails.push(emailAddress.trim());
+          }
+        }
+
+        if(emailRaw2 != null)
+        {
+          let email2Line = emailRaw2[0].split("\n")[1].trim();
+          let emailAddress2 = email2Line.substring(4, email2Line.length - 5);
+          let emailAddress2s = emailAddress2.split(",");
+          for(let e = 0; e < emailAddress2s.length; e++)
+          {
+            if(emailAddress2s[e].trim() != "")
+            {
+              emails.push(emailAddress2s[e].trim());
+            }
+          }
+        }
+
+        recordsToPush = emails.length;
+      }
+
+      else if(subjectType == 6)
+      {
+        //nameRaw = bodyHtml.match(new RegExp("Name:.*"));
+        //addressRaw = bodyHtml.match(new RegExp("Address:.*"));
+        //phoneRaw = bodyHtml.match(new RegExp("Phone Number:.*"));        
+        //emailRaw = bodyHtml.match(new RegExp("Email:.*"));
+        //dobRaw = bodyHtml.match(new RegExp("Date of Birth:.*"));
+        //Logger.log(bodyHtml);
+        //Logger.log(body);
+        //Logger.log(addressRaw);
+        
+        if(nameRaw != null)
+        {
+          let nameLine = nameRaw[0].trim();
+          name = nameLine.substring(6, nameLine.length - 5);
+          firstName = extractFirstName(name);
+          lastName = extractLastName(name);
+        }
+
+        if(addressRaw != null)
+        {
+          let addressLine = addressRaw[0];
+          addressFull = addressLine.substring(9, addressLine.length - 5);
+          addressSplit = addressFull.split(",");   
+          let addySplitLen = addressSplit.length;
+          address = addressSplit[0].trim();
+          address1 = address;
+          zip = addressSplit[addySplitLen - 2];
+          country = addressSplit[addySplitLen - 1];
+
+          //else if(addySplitLen == 4)
+          //{
+            //address1 = addressSplit[0].trim() + " " + addressSplit[1].trim();
+            //address = address1;
+            //city = addressSplit[2].trim();
+            //state = addressSplit[3].trim().substring(0, 2).trim();
+            //zip = addressSplit[3].trim().substring(addressSplit[3].length - 6, addressSplit[3].length - 4).trim();            
+          //}   
+        }
+
+        if(dobRaw != null)
+        {
+          let dobLine = dobRaw[0].trim();
+          dob = dobLine.substring(15, dobLine.length - 5);
+        }
+
+        if(phoneRaw != null)
+        {
+          let removeFirstNumber = false;
+          let phoneLine = phoneRaw[0].trim();
+          phone = phoneLine.substring(12, phoneLine.length - 5);
+          phone = cleanPhone(phone, removeFirstNumber);
+        }
+
+        if(emailRaw != null)
+        {
+          let emailLine = emailRaw[0].trim();
+          emailAddress = emailLine.substring(7, emailLine.length - 5);
+          if(emailAddress.trim() != "")
+          {
+            emails.push(emailAddress.trim());
+          }
+        }
+        recordsToPush = emails.length;
+        
+      } 
+      //add the parsed fields to the data
+      //any data not parsed out will be an empty string ""
+
+      //idea:
+      //if emailAddress has , in it, then split email and loop this same data with each email?
+      //some emails have  multiple names, anyway to split them consistently too?
+
+      //Logger.log(recordsToPush);
+
+
+
+      //FINAL CLEAN UP
+      //if email starts in number. 
+      //if address starts in number. 
+      //if address1 starts in number. 
+
+      let lastWordInAddress1 = extractLastName(address1);
+      let lastWordInAddress2 = extractLastName(address2);
+      let stateZip = String(state.toUpperCase() + " " +String("12345").toUpperCase())
+      let cityStateZip = String(city.toUpperCase() + " " +state.toUpperCase() + " " +String("12345").toUpperCase())
+
+
+      if(address1.toUpperCase().substring(address1.length - stateZip.length, address1.length) == stateZip) 
+        address1 = address1.substring(0, address1.length - stateZip.length);
+      if(address1.toUpperCase().substring(address1.length - cityStateZip.length, address1.length) == cityStateZip) 
+        address1 = address1.substring(0, address1.length - cityStateZip.length);
+      if(address2.toUpperCase().substring(address2.length - stateZip.length, address2.length) == stateZip) 
+        address2 = address2.substring(0, address2.length - stateZip.length);
+      if(address2.toUpperCase().substring(address2.length - cityStateZip.length, address2.length) == cityStateZip) 
+        address2 = address2.substring(0, address2.length - cityStateZip.length);
+
+      if(lastWordInAddress1 != "")
+      {
+        if(lastWordInAddress1.toUpperCase() == city.toUpperCase() || 
+           lastWordInAddress1.toUpperCase() == String(zips[zips.length - 1]).toUpperCase())
+        {
+          address1 = address1.substring(0, address1.length - lastWordInAddress1.length).trim();
+        }
+      }
+      if(lastWordInAddress2 != "")
+      {
+        if(lastWordInAddress2.toUpperCase() == city.toUpperCase() || 
+           lastWordInAddress2.toUpperCase() == String(zips[zips.length - 1]).toUpperCase())
+        {
+         address2 = address2.substring(0, address2.length - lastWordInAddress2.length).trim();
+        }
+      }
+
+      if(address1.toUpperCase() == state.toUpperCase() || 
+         address1.toUpperCase() == city.toUpperCase() || 
+         address1.toUpperCase() == String(zips[zips.length - 1]).toUpperCase() || 
+         address1.toUpperCase() == stateZip)
+      {
+        address1 = "";
+      }
+      if(address2.toUpperCase() == state.toUpperCase() || 
+         address2.toUpperCase() == city.toUpperCase() || 
+         address2.toUpperCase() == String(zips[zips.length - 1]).toUpperCase() || 
+         address2.toUpperCase() == stateZip)
+      {
+        address2 = "";
+      }
+
+      if(address2 == "")
+      {
+        address1And2 = String(address1);
+      }
+      else
+      {
+        address1And2 = String(address1) + " " + String(address2);
+      }
+
+      if(name == "")
+      {
+        name = String(firstName) + " " + String(lastName);
+      }
+
+
+      //getting data ready to be pasted on google sheet
+      if(subjectType == 1)
+      {
+        for(let r = 0; r < recordsToPush; r++)
+        {
+        data.push([]); //insert a new row into the data we will return
+        data[data.length - 1].push(date);
+        data[data.length - 1].push(String(emailFromRaw));
+        data[data.length - 1].push(String(emailFrom));
+        data[data.length - 1].push(String(subject).trim());
+        data[data.length - 1].push(String(name).toUpperCase().trim());
+        data[data.length - 1].push(String(firstName).toUpperCase().trim());
+        data[data.length - 1].push(String(lastName).toUpperCase().trim());
+        data[data.length - 1].push(String(addresses[r]).toUpperCase().trim());
+        data[data.length - 1].push(String(address1And2s[r]).toUpperCase().trim());
+        data[data.length - 1].push(String(address1s[r]).toUpperCase().trim());
+        data[data.length - 1].push(String(address2s[r]).toUpperCase().trim());
+        data[data.length - 1].push(String(cities[r]).toUpperCase().trim());
+        data[data.length - 1].push(String(states[r]).toUpperCase().trim());
+        data[data.length - 1].push(String(zips[r]).toUpperCase().trim());
+        data[data.length - 1].push(String(zip4s[r]).toUpperCase().trim());
+        data[data.length - 1].push(String(countries[r]).toUpperCase().trim());
+        data[data.length - 1].push(String(emails[r]).trim().toUpperCase());
+        data[data.length - 1].push(phone.toUpperCase());
+        data[data.length - 1].push(dob);
+        data[data.length - 1].push(String(currentUser)); //INBOX
+        }
+      }
+      else if(subjectType == 2)
+      {
+        for(let r = 0; r < recordsToPush; r++)
+        {
+        data.push([]); //insert a new row into the data we will return
+        data[data.length - 1].push(date);
+        data[data.length - 1].push(String(emailFromRaw));
+        data[data.length - 1].push(String(emailFrom));
+        data[data.length - 1].push(String(subject).trim());
+        data[data.length - 1].push(String(name).toUpperCase().trim());
+        data[data.length - 1].push(String(firstName).toUpperCase().trim());
+        data[data.length - 1].push(String(lastName).toUpperCase().trim());
+        data[data.length - 1].push(String(""));
+        data[data.length - 1].push(String(address1And2).toUpperCase().trim());
+        data[data.length - 1].push(String(address1).toUpperCase().trim());
+        data[data.length - 1].push(String(address2).toUpperCase().trim());
+        data[data.length - 1].push(String(city).toUpperCase().trim());
+        data[data.length - 1].push(String(state).toUpperCase().trim());
+        data[data.length - 1].push(String(zip).toUpperCase().trim());
+        data[data.length - 1].push(String(zip4).toUpperCase().trim());
+        data[data.length - 1].push(String(country).toUpperCase().trim());
+        
+        //email
+        if(recordsToPush >= 2)
+        {
+          data[data.length - 1].push(emailAddressSplit[r].trim().toUpperCase());
+        }
+        else
+        {
+          data[data.length - 1].push(emailAddress.trim().toUpperCase());
+        }
+
+        data[data.length - 1].push(phone.toUpperCase());
+        data[data.length - 1].push(dob);
+        data[data.length - 1].push(String(currentUser)); //INBOX
+        }
+      }
+      else if(subjectType == 3)
+      {
+        for(let r = 0; r < recordsToPush; r++)
+        {
+        data.push([]); //insert a new row into the data we will return
+        data[data.length - 1].push(date);
+        data[data.length - 1].push(String(emailFromRaw));
+        data[data.length - 1].push(String(emailFrom));
+        data[data.length - 1].push(String(subject).trim());
+        data[data.length - 1].push(String(name).toUpperCase().trim());
+        data[data.length - 1].push(String(firstName).toUpperCase().trim());
+        data[data.length - 1].push(String(lastName).toUpperCase().trim());
+        data[data.length - 1].push(String(addressFull.trim().replace("\n"," ").replace("\r"," ").replace("\t"," ").replace(/\r\n/g," ").replace(/\n\r/g," ")));
+        data[data.length - 1].push(String(address).toUpperCase().trim());
+        data[data.length - 1].push(String(address1).toUpperCase().trim());
+        data[data.length - 1].push(String(address2).toUpperCase().trim());
+        data[data.length - 1].push(String(city).toUpperCase().trim());
+        data[data.length - 1].push(String(state).toUpperCase().trim());
+        data[data.length - 1].push(String(zip).toUpperCase().trim());
+        data[data.length - 1].push(String("").toUpperCase().trim());
+        data[data.length - 1].push(String(country).toUpperCase().trim());
+        data[data.length - 1].push(""); //email
+        data[data.length - 1].push(""); //phone
+        data[data.length - 1].push(""); //dob
+        data[data.length - 1].push(String(currentUser)); //INBOX
+        }
+      }
+      else if(subjectType == 4)
+      {
+        for(let r = 0; r < recordsToPush; r++)
+        {
+          //Logger.log(emailFromRaw);
+        dataAtlas.push([]); //insert a new row into the dataAtlas we will return
+        dataAtlas[dataAtlas.length - 1].push(date);
+        dataAtlas[dataAtlas.length - 1].push(String(emailFromRaw));
+        dataAtlas[dataAtlas.length - 1].push(String(emailFrom));
+        dataAtlas[dataAtlas.length - 1].push(String(subject).trim());
+        dataAtlas[dataAtlas.length - 1].push(String(names[r]).toUpperCase().trim());
+        dataAtlas[dataAtlas.length - 1].push(String(firstNames[r]).toUpperCase().trim());
+        dataAtlas[dataAtlas.length - 1].push(String(lastNames[r]).toUpperCase().trim());
+        dataAtlas[dataAtlas.length - 1].push(String(address));
+        dataAtlas[dataAtlas.length - 1].push(String(address1).toUpperCase().trim());
+        dataAtlas[dataAtlas.length - 1].push(String(address1).toUpperCase().trim());
+        dataAtlas[dataAtlas.length - 1].push(String(address2).toUpperCase().trim());
+        dataAtlas[dataAtlas.length - 1].push(String(city).toUpperCase().trim());
+        dataAtlas[dataAtlas.length - 1].push(String(state).toUpperCase().trim());
+        dataAtlas[dataAtlas.length - 1].push(String(zip).toUpperCase().trim());
+        dataAtlas[dataAtlas.length - 1].push(String("").toUpperCase().trim());
+        dataAtlas[dataAtlas.length - 1].push(String(country).toUpperCase().trim());
+        dataAtlas[dataAtlas.length - 1].push(""); //email
+        dataAtlas[dataAtlas.length - 1].push(String(phone)); //phone
+        dataAtlas[dataAtlas.length - 1].push(""); //dob
+        dataAtlas[dataAtlas.length - 1].push(String(currentUser)); //INBOX
+        }
+      }
+      else if(subjectType == 5)
+      {
+        for(let r = 0; r < recordsToPush; r++)
+        {
+          //Logger.log(emailFromRaw);
+        data.push([]); //insert a new row into the data we will return
+        data[data.length - 1].push(date);
+        data[data.length - 1].push(String(emailFromRaw));
+        data[data.length - 1].push(String(emailFrom));
+        data[data.length - 1].push(String(subject).trim());
+        data[data.length - 1].push(String(name).toUpperCase().trim());
+        data[data.length - 1].push(String(firstName).toUpperCase().trim());
+        data[data.length - 1].push(String(lastName).toUpperCase().trim());
+        data[data.length - 1].push(String(address));
+        data[data.length - 1].push(String(address1).toUpperCase().trim());
+        data[data.length - 1].push(String(address1).toUpperCase().trim());
+        data[data.length - 1].push(String(address2).toUpperCase().trim());
+        data[data.length - 1].push(String(city).toUpperCase().trim());
+        data[data.length - 1].push(String(state).toUpperCase().trim());
+        data[data.length - 1].push(String(zip).toUpperCase().trim());
+        data[data.length - 1].push(String("").toUpperCase().trim());
+        data[data.length - 1].push(String(country).toUpperCase().trim());
+        data[data.length - 1].push(String(emails[r]).toUpperCase().trim()); //email
+        data[data.length - 1].push(String(phone)); //phone
+        data[data.length - 1].push(""); //dob
+        data[data.length - 1].push(String(currentUser)); //INBOX
+        }
+      }
+      else if(subjectType == 6)
+      {
+        for(let r = 0; r < recordsToPush; r++)
+        {
+          //Logger.log(emailFromRaw);
+        data.push([]); //insert a new row into the data we will return
+        data[data.length - 1].push(date);
+        data[data.length - 1].push(String(emailFromRaw));
+        data[data.length - 1].push(String(emailFrom));
+        data[data.length - 1].push(String(subject).trim());
+        data[data.length - 1].push(String(name).toUpperCase().trim());
+        data[data.length - 1].push(String(firstName).toUpperCase().trim());
+        data[data.length - 1].push(String(lastName).toUpperCase().trim());
+        data[data.length - 1].push(String(addressFull).toUpperCase().trim());
+        data[data.length - 1].push(String(address1).toUpperCase().trim());
+        data[data.length - 1].push(String(address1).toUpperCase().trim());
+        data[data.length - 1].push(String(address2).toUpperCase().trim());
+        data[data.length - 1].push(String(city).toUpperCase().trim());
+        data[data.length - 1].push(String(state).toUpperCase().trim());
+        data[data.length - 1].push(String(zip).toUpperCase().trim());
+        data[data.length - 1].push(String("").toUpperCase().trim());
+        data[data.length - 1].push(String(country).toUpperCase().trim());
+        data[data.length - 1].push(String(emails[r]).toUpperCase().trim()); //email
+        data[data.length - 1].push(String(phone)); //phone
+        data[data.length - 1].push(String(dob)); //dob
+        data[data.length - 1].push(String(currentUser)); //INBOX
+        }
+      }
+
+
+
+
+      //gmail labelling
+      
+      //if we want to add this gmail message to a label
+      if(addToLabelName != "")
+      {
+
+        //if we want to add the message to the ccpa labels
+        if(addToLabelName == "_CCPA_EMAIL_DATE_")
+        {
+          let date = email.getDate();
+          let year = date.getFullYear();
+          let month = date.toLocaleString('default', { month: 'long' }); //https://stackoverflow.com/questions/1643320/get-month-name-from-date
+
+          let ccpaLabelName = "California Compliance/" + String(month) + " " + String(year);
+
+          //if the label exists, it will return it
+          //if the label doesn't exist, it will create the label then return it
+          //let ccpaLabel = GmailApp.createLabel(ccpaLabelName); //leave this commented out, we don't want to add ccpa msgs to labe
+
+          //Logger.log(ccpaLabelName);
+
+          //marks as read
+          try
+          {
+            email.getThread().markRead(); 
+          }
+          catch
+          {
+            Logger.log(String(subject) + " NOT MARKED AS READ");
+          }
+          //adds to the label
+          //email.getThread().addLabel(ccpaLabel); //leave this commented out, we don't want to add ccpa msgs to label
+
+          //removes from inbox
+          //email.getThread().moveToArchive(); //leave this commented out, we don't want to remove from the inbox
+        }
+        //generic
+        else
+        {
+          //threads[i].addLabel(addToLabelName); //uncomment this
+        }
+      }
+
+    }
+
+    if(subjectType == 0)
+    {
+      //if the label exists, it will return it
+      //if the label doesn't exist, it will create the label then return it
+      let irregularLabel = GmailApp.createLabel("ONE-OFFS");
+
+      //adds to the label
+      email.getThread().addLabel(irregularLabel); 
+    }
+    
+    email_index += 1;
+  }
+
+  return [data, dataAtlas];
+}
+
+
+
+//------------------------------------------------------------
+//LOOPS THROUGH A LIST OF GMAIL MESSAGES IDENTIFIES AS ONE-OFF AND LABELS THEM
+//------------------------------------------------------------
+function labelMessagesAsOneOff(messages)
+{
+  //For every email
+  let email_index = 0;
+  for(let email of messages)
+  {
+    let date = email.getDate();
+
+    //Categorize email by subject line
+    let subject = email.getSubject();
+    let emailFromRaw = email.getFrom();
+    let emailFrom = emailFromRaw;
+    let subjectType = 0;
+    
+    if(email_index % 20 == 0) Logger.log(String(email_index) + " " + String(subject));
+
+    //----------------------------------------------------------------
+    //LABEL EACH EMAIL BY SUBJECT LINE
+
+    //there are a few types of emails that come in with ccpa requests
+    //it looks like we can categorize them by their subject lines
+    //if a new email type comes in that isn't accounted for below, then it will be ignored by this script!
+    let subjectTypeInfo = getSubjectType(subject);
+    subjectType = subjectTypeInfo[0];
+    emailFrom = subjectTypeInfo[1];
+    //all other subjects will have a subjectType of 0
+
+    GmailApp.moveThreadToInbox(email.getThread()); //so they dont stay in spam
+
+    if(subjectType == 0)
+    {
+      //if the label exists, it will return it
+      //if the label doesn't exist, it will create the label then return it
+      let irregularLabel = GmailApp.createLabel("ONE-OFFS");
+
+      //adds to the label
+      email.getThread().addLabel(irregularLabel); 
+    }
+
+    email_index += 1;
+  }
+}
+
+
+
+//------------------------------------------------------------
+//LABELS THE MESSAGE BY SUBJECT
+//------------------------------------------------------------
+function getSubjectType(subject)
+{
+    let subjectType = 0;
+    let emailFrom = "";
+
+    if(subject.substring(0, "XYZ data removal request".length) == "XYZ data removal request")
+    { //incogni
+      subjectType = 1;
+      emailFrom = "incogni";
+    }
+    else if(subject.substring(0, "Data Protection & Privacy Rights implementation request for".length) == "Data Protection & Privacy Rights implementation request for")
+    { //PurePrivacy
+      subjectType = 2;
+      emailFrom = "PurePrivacy";
+    }
+    else if(subject.substring(0, "Optery Authorized Agent".length) == "Optery Authorized Agent")
+    { //Optery
+      subjectType = 3;
+      emailFrom = "Optery";
+    }
+    else if(subject.substring(0, "Data Subject Request - Redaction/nondisclosure Request".length) == "Data Subject Request - Redaction/nondisclosure Request")
+    { //Atlas
+      subjectType = 4;
+      emailFrom = "Atlas";
+    }
+    else if(subject.substring(0, "Data Opt Out Request (XYZ".length) == "Data Opt Out Request (XYZ")
+    { //Consumer Reports
+      subjectType = 5;
+      emailFrom = "Consumer Reports";
+    }
+    else if(subject.substring(0, "Request for Data Deletion from XYZ".length) == "Request for Data Deletion from XYZ")
+    { //EMRX
+      subjectType = 6;
+      emailFrom = "EMRX";
+    }
+
+    return [subjectType, emailFrom];
+}
+
+
+
+//------------------------------------------------------------
+//RECEIVES THE DATA AND INSERTS IT INTO (AND CREATES IF NEEDED) THE RELEVANT SHEET (CURRENT MONTH YEAR)
+//------------------------------------------------------------
+function insertDataIntoCcpaSpreadsheet(data, sheetName, headerRow, date = new Date())
+{
+  let ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  //maybe this should be weekly instead of monthly?
+  if(sheetName == "_CCPA_CURRENT_DATE_")
+  {
+    sheetName = mondayToSunday(date);
+  }
+
+  Logger.log(`sheetName: ${sheetName}`);
+
+  //creates the sheet (current date year month) if it doesn't exist
+  let sheet = ss.getSheetByName(sheetName);
+  if (sheet == null)
+  {
+    sheet = ss.getSheetByName("TEMPLATE").copyTo(ss);
+    sheet.setName(sheetName);
+    ss.setActiveSheet(sheet);
+    ss.moveActiveSheet(2); //this needs to be 1-indexed
+  }
+
+  //insert rows
+  if(data.length <= 0)
+  {
+    return;
+  }
+  sheet.insertRowsAfter(headerRow, data.length);
+
+  //paste data
+  sheet.getRange(headerRow + 1, 1, data.length, data[0].length).setValues(data);
+}
+
+//------------------------------------------------------------
+//RECEIVES THE DATA AND INSERTS IT INTO (AND CREATES IF NEEDED) THE RELEVANT SHEET (CURRENT MONTH YEAR)
+//------------------------------------------------------------
+function insertAtlasDataIntoCcpaSpreadsheet(data, sheetName, headerRow, date = new Date())
+{
+  let ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  //maybe this should be weekly instead of monthly?
+  if(sheetName == "_CCPA_CURRENT_DATE_")
+  {
+    sheetName = everySecondDay(date) + "_ATLAS";
+  }
+
+  Logger.log(`sheetName: ${sheetName}`);
+
+  //creates the sheet (current date year month) if it doesn't exist
+  let sheet = ss.getSheetByName(sheetName);
+  if (sheet == null)
+  {
+    sheet = ss.getSheetByName("TEMPLATE").copyTo(ss);
+    sheet.setName(sheetName);
+    ss.setActiveSheet(sheet);
+    ss.moveActiveSheet(2); //this needs to be 1-indexed
+  }
+
+  //insert rows
+  if(data.length <= 0)
+  {
+    return;
+  }
+  sheet.insertRowsAfter(headerRow, data.length);
+
+  //paste data
+  sheet.getRange(headerRow + 1, 1, data.length, data[0].length).setValues(data);
+}
+
+
+//------------------------------------------------------------
+//RETURNS A DATE RANGE OF THE WEEK A DATE IS IN
+//THIS IS BECAUSE WE WANTED THE CCPA DATA ON A WEEKLY BASIS
+//------------------------------------------------------------
+function mondayToSunday(currentDate)
+{
+  //https://stackoverflow.com/questions/3224834/get-difference-between-2-dates-in-javascript
+  //currentDate = new Date("March 10, 2024"); //for testing, leave commented out
+
+  //date.getDay() goes from 0-6 sun-sat, which hurts my head, so the below changes it to 1-7 mon-sun
+  let day;
+  if(currentDate.getDay() == 0) //if sunday
+    day = 7;
+  else //if any other day
+    day = currentDate.getDay();
+  
+  let monday = new Date(new Date(currentDate).setDate(currentDate.getDate() - (-1 + day))); //monday in the week of currentDate
+  let sunday = new Date(new Date(currentDate).setDate(currentDate.getDate() - (day - 7))); //sunday in the week of currentDate
+  //Logger.log(new Date(monday));
+  //Logger.log(new Date(sunday));
+  
+  //--------------------------------
+  //YYYMMDD for Monday
+  //--------------------------------
+  let monYr = String(monday.getFullYear());
+
+  let monMo; //add leading 0 for less than 10
+  if(monday.getMonth() + 1 < 10)
+    monMo = "0" + String(monday.getMonth() + 1);
+  else
+    monMo = String(monday.getMonth() + 1);
+
+  let monDy; //add leading 0 for less than 10
+  if(monday.getDate() < 10)
+    monDy = "0" + String(monday.getDate());
+  else
+    monDy = String(monday.getDate());
+
+  let monFull = `${monYr}${monMo}${monDy}`; //YYYMMDD
+
+  //--------------------------------
+  //YYYMMDD for Sunday
+  //--------------------------------
+  let sunYr = String(sunday.getFullYear());
+
+  let sunMo; //add leading 0 for less than 10
+  if(sunday.getMonth() + 1 < 10)
+    sunMo = "0" + String(sunday.getMonth() + 1);
+  else
+    sunMo = String(sunday.getMonth() + 1);
+
+  let sunDy; //add leading 0 for less than 10
+  if(sunday.getDate() < 10)
+    sunDy = "0" + String(sunday.getDate());
+  else
+    sunDy = String(sunday.getDate());
+
+  let sunFull = `${sunYr}${sunMo}${sunDy}`; //YYYMMDD
+
+  //--------------------------------
+  //YYYYMMDD-YYYYMMDD monday-sunday
+  //--------------------------------
+  let monToSun = `${monFull}-${sunFull}`;
+  //Logger.log(monToSun);
+
+  return monToSun;
+}
+
+function testeverySecondDay()
+{
+  Logger.log(new Date("December 11, 2024").getDay());
+  Logger.log(new Date("December 10, 2024").getDay());
+  Logger.log(new Date("December 9, 2024").getDay());
+  Logger.log(everySecondDay(new Date("December 11, 2024")));
+  Logger.log(everySecondDay(new Date("December 10, 2024")));
+  Logger.log(everySecondDay(new Date("December 9, 2024")));
+
+  Logger.log(new Date("November 26, 2024").getDay());
+  Logger.log(new Date("November 25, 2024").getDay());
+  Logger.log(everySecondDay(new Date("November 27, 2024")));
+  Logger.log(mondayToSunday(new Date("November 27, 2024")));
+  Logger.log(everySecondDay(new Date("November 26, 2024")));
+  Logger.log(mondayToSunday(new Date("November 26, 2024")));
+  Logger.log(everySecondDay(new Date("November 25, 2024")));
+  Logger.log(mondayToSunday(new Date("November 25, 2024")));
+
+  Logger.log("///");
+  Logger.log(everySecondDay(new Date("November 27, 2024")));
+
+  Logger.log(everySecondDay(new Date("November 26, 2024")));
+  Logger.log(everySecondDay(new Date("November 25, 2024")));
+
+  Logger.log(everySecondDay(new Date("November 24, 2024")));
+  Logger.log(everySecondDay(new Date("November 23, 2024")));
+  Logger.log(everySecondDay(new Date("November 22, 2024")));
+
+  Logger.log(everySecondDay(new Date("November 21, 2024")));
+  Logger.log(everySecondDay(new Date("November 20, 2024")));
+
+  Logger.log(everySecondDay(new Date("November 19, 2024")));
+  Logger.log(everySecondDay(new Date("November 18, 2024")));
+
+  Logger.log("///");
+
+  Logger.log(mondayToSunday(new Date("November 26, 2024")));
+
+  Logger.log(mondayToSunday(new Date("November 25, 2024")));
+  Logger.log(mondayToSunday(new Date("November 24, 2024")));
+  Logger.log(mondayToSunday(new Date("November 23, 2024")));
+
+  Logger.log(mondayToSunday(new Date("November 22, 2024")));
+  Logger.log(mondayToSunday(new Date("November 21, 2024")));
+
+  Logger.log(mondayToSunday(new Date("November 20, 2024")));
+  Logger.log(mondayToSunday(new Date("November 19, 2024")));
+
+  Logger.log(mondayToSunday(new Date("November 18, 2024")));
+  //Logger.log(everySecondDay(new Date(new Date(new Date().setDate((new Date()).getDate() - 1)))));
+}
+
+
+//------------------------------------------------------------
+//RETURNS A DATE RANGE OF EVERY 2ND DAY IN THE WEEK EXCLUDING WEEKENDS
+//THIS IS BECAUSE WE WANTED THE ATLAS DATA EVERY 2 DAYS
+//------------------------------------------------------------
+function everySecondDay(currentDate)
+{
+  //https://stackoverflow.com/questions/3224834/get-difference-between-2-dates-in-javascript
+  //currentDate = new Date("November 16, 2024"); //for testing, leave commented out
+
+  //date.getDay() goes from 0-6 sun-sat, which hurts my head, so the below changes it to 1-7 mon-sun
+  let day;
+  if(currentDate.getDay() == 0) //if sunday
+    day = 7;
+  else //if any other day
+    day = currentDate.getDay();
+  //Logger.log(day);
+  //-------------------------------------------------------------
+
+  let start;
+  let end;
+
+  //if SAT, SUN, MON (DATA FROM FRI, SAT, SUN) - EMAILED ON MON
+  if(day == 5)
+  {
+    start = new Date(new Date(currentDate).setDate(currentDate.getDate() + 0));
+    end =   new Date(new Date(currentDate).setDate(currentDate.getDate() + 2));
+  }
+  else if(day == 6)
+  {
+    start = new Date(new Date(currentDate).setDate(currentDate.getDate() - 1));
+    end =   new Date(new Date(currentDate).setDate(currentDate.getDate() + 1));
+  }
+  else if(day == 7)
+  {
+    start = new Date(new Date(currentDate).setDate(currentDate.getDate() - 2));
+    end =   new Date(new Date(currentDate).setDate(currentDate.getDate() + 0));
+  }
+
+  //if TUE, WED      (DATA FROM MON, TUE)      - EMAILED ON WED
+  if(day == 1)
+  {
+    start = new Date(new Date(currentDate).setDate(currentDate.getDate() + 0));
+    end =   new Date(new Date(currentDate).setDate(currentDate.getDate() + 1));
+  }
+  else if(day == 2)
+  {
+    start = new Date(new Date(currentDate).setDate(currentDate.getDate() - 1));
+    end =   new Date(new Date(currentDate).setDate(currentDate.getDate() + 0));
+  }
+
+  //if THU, FRI      (DATA FROM WED, THU)      - EMAILED ON FRI
+  if(day == 3)
+  {
+    start = new Date(new Date(currentDate).setDate(currentDate.getDate() + 0));
+    end =   new Date(new Date(currentDate).setDate(currentDate.getDate() + 1));
+  }
+  else if(day == 4)
+  {
+    start = new Date(new Date(currentDate).setDate(currentDate.getDate() - 1));
+    end =   new Date(new Date(currentDate).setDate(currentDate.getDate() + 0));
+  }
+
+  //start = new Date(new Date(currentDate).setDate(start.getDate() - 1));
+  //end =   new Date(new Date(currentDate).setDate(end.getDate() -1));
+  //Logger.log(new Date(start));
+  //Logger.log(new Date(end));
+  
+  //--------------------------------
+  //YYYMMDD for start
+  //--------------------------------
+  let monYr = String(start.getFullYear());
+
+  let monMo; //add leading 0 for less than 10
+  if(start.getMonth() + 1 < 10)
+    monMo = "0" + String(start.getMonth() + 1);
+  else
+    monMo = String(start.getMonth() + 1);
+
+  let monDy; //add leading 0 for less than 10
+  if(start.getDate() < 10)
+    monDy = "0" + String(start.getDate());
+  else
+    monDy = String(start.getDate());
+
+  let monFull = `${monYr}${monMo}${monDy}`; //YYYMMDD
+
+  //--------------------------------
+  //YYYMMDD for end
+  //--------------------------------
+  let sunYr = String(end.getFullYear());
+
+  let sunMo; //add leading 0 for less than 10
+  if(end.getMonth() + 1 < 10)
+    sunMo = "0" + String(end.getMonth() + 1);
+  else
+    sunMo = String(end.getMonth() + 1);
+
+  let sunDy; //add leading 0 for less than 10
+  if(end.getDate() < 10)
+    sunDy = "0" + String(end.getDate());
+  else
+    sunDy = String(end.getDate());
+
+  let sunFull = `${sunYr}${sunMo}${sunDy}`; //YYYMMDD
+
+  //--------------------------------
+  //YYYYMMDD-YYYYMMDD start-end
+  //--------------------------------
+  let every2Days = `${monFull}-${sunFull}`;
+  //Logger.log(every2Days);
+
+  return every2Days;
+}
+
+
+//------------------------------------------------------------
+//COPIES THE FIRST NAME PORTION OF THE "DEVIDENAME" STORED PROCEDURE WE HAVE IN SSMS
+//FIRST = TRIMMED SUBSTRING OF THE FULL NAME BEFORE THE FIRST SPACE (after we remove the title)
+//------------------------------------------------------------
+function extractFirstName(fullName)
+{
+  //remove title
+  fullName = fullName.replace(".", " ");
+  if(fullName.substring(0, 3).toUpperCase() == "DR " ||
+     fullName.substring(0, 3).toUpperCase() == "MR " ||
+     fullName.substring(0, 3).toUpperCase() == "MS ")
+  {
+    fullName = fullName.substring(3).trim();
+  }
+  if(fullName.substring(0, 4).toUpperCase() == "MRS ")
+  {
+    fullName = fullName.substring(4).trim();
+  }
+
+  //before the first space
+  let firstName = fullName.substring(0, fullName.indexOf(" ")).trim();
+  return firstName;
+}
+
+//------------------------------------------------------------
+//COPIES THE LAST NAME PORTION OF THE "DEVIDENAME" STORED PROCEDURE WE HAVE IN SSMS
+//LAST = TRIMMED SUBSTRING OF THE FULL NAME BEFORE THE LAST SPACE (after we remove the suffix)
+//------------------------------------------------------------
+function extractLastName(fullName)
+{
+  let fullNameReversed = fullName.split('').reverse().join('').trim(); 
+  
+  //remove suffix
+  fullNameReversed = fullNameReversed.replace(".", " ");
+  if(fullNameReversed.substring(0, 2).toUpperCase() == "I " ||
+     fullNameReversed.substring(0, 2).toUpperCase() == "V ")
+  {
+    fullNameReversed = fullNameReversed.substring(2).trim();
+  }
+  if(fullNameReversed.substring(0, 3).toUpperCase() == "RJ " || // JR
+     fullNameReversed.substring(0, 3).toUpperCase() == "RS " || // SR
+     fullNameReversed.substring(0, 3).toUpperCase() == "II " || 
+     fullNameReversed.substring(0, 3).toUpperCase() == "VI " || // IV
+     fullNameReversed.substring(0, 3).toUpperCase() == "IV ")   // VI
+  {
+    fullNameReversed = fullNameReversed.substring(3).trim();
+  }
+  if(fullNameReversed.substring(0, 4).toUpperCase() == "III ")
+  {
+    fullNameReversed = fullNameReversed.substring(4).trim();
+  }
+
+  //after the last space
+  let lastNameReversed = fullNameReversed.substring(0, fullNameReversed.indexOf(" ")).trim();
+  let lastName = lastNameReversed.split('').reverse().join('').trim();
+
+  return lastName;
+}
+
+
+//------------------------------------------------------------
+//RETURNS BOTH ADDRESS1 AND 2 IN AN ARRAY
+//LOOKS FOR ADDRESS2 BASED ON: SPACE_KEYWORD_(SPACE OR DASH OR PERIOD]_REST OF THE STRING
+//ADDRESS1 IS THEN WHATEVER ADDRESS2 IS NOT
+//------------------------------------------------------------
+function extractAddress1and2(address)
+{
+  address = address.toUpperCase().trim();
+  let address2Raw = address.match(new RegExp("r"));
+  
+  let address1 = address;
+  let address2 = "";
+
+  if(address2Raw != null)
+  {
+    address2 = address2Raw[0].trim();
+    address1 = address.substring(0, address.length - address2.length).trim();
+  }
+
+  return [address1, address2];
+}
+
+
+
+//------------------------------------------------------------
+//RETURNS BOTH ADDRESS1 AND 2 IN AN ARRAY
+//LOOKS FOR ADDRESS2 BASED ON: SPACE_KEYWORD_(SPACE OR DASH OR PERIOD]_REST OF THE STRING
+//ADDRESS1 IS THEN WHATEVER ADDRESS2 IS NOT
+//------------------------------------------------------------
+function cleanPhone(phone, removeFirstNumber = false)
+{
+  phone = phone.replace(/ /g,"");
+  phone = phone.replace(/\-/g,"");
+  phone = phone.replace(/\(/g,"");
+  phone = phone.replace(/\)/g,"");
+  phone = phone.replace(/\+/g,"");
+
+  if(removeFirstNumber == true)
+  {
+    phone = phone.substring(1, phone.length)
+  }
+
+  return phone;
+}
+
