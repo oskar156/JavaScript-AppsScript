@@ -1,0 +1,9 @@
+//get labels for every checkbox on page
+document.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+  const label = checkbox.closest('label') || document.querySelector(`label[for="${checkbox.id}"]`);
+  const text = label ? label.textContent.trim() : '(no label)';
+  console.log(text);
+});
+
+//check all checkboxes on pages
+document.querySelectorAll('tr[bgcolor="#CCCCFF"] td input[type="checkbox"]').forEach(checkbox => checkbox.checked = true);
